@@ -1,0 +1,1 @@
+npx tsx scripts/crawler.ts "https://image.baidu.com/search/index?tn=baiduimage&fm=result&ie=utf-8&word=%E5%B8%83%E5%B8%83%20gif" --category gif --tags https://image.baidu.com/search/index\?tn\=baiduimage\&fm\=result\&ie\=utf-8\&word\=%E4%B8%80%E4%BA%8C --max 100
