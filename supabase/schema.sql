@@ -1,94 +1,83 @@
--- 创建表情包表
+-- ============ 标签系统（多对多） ============
+
+CREATE TABLE IF NOT EXISTS tags (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  name TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  CONSTRAINT tags_name_unique UNIQUE (name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(name);
+
+ALTER TABLE tags ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "允许公开读取标签" ON tags;
+CREATE POLICY "允许公开读取标签" ON tags FOR SELECT USING (true);
+DROP POLICY IF EXISTS "允许插入标签" ON tags;
+CREATE POLICY "允许插入标签" ON tags FOR INSERT WITH CHECK (true);
+
+-- ============ 表情包表 ============
+
 CREATE TABLE IF NOT EXISTS memes (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   title TEXT NOT NULL,
   image_url TEXT NOT NULL,
   category TEXT NOT NULL DEFAULT 'other',
-  tags TEXT[] DEFAULT '{}',
+  image_url_hash TEXT,
+  phash TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 启用 RLS
 ALTER TABLE memes ENABLE ROW LEVEL SECURITY;
-
--- 允许所有人读取
+DROP POLICY IF EXISTS "允许公开读取" ON memes;
 CREATE POLICY "允许公开读取" ON memes FOR SELECT USING (true);
-
--- 允许所有人插入（匿名上传）
+DROP POLICY IF EXISTS "允许所有人插入" ON memes;
 CREATE POLICY "允许所有人插入" ON memes FOR INSERT WITH CHECK (true);
 
--- 创建索引以优化查询
+-- 唯一约束（URL 去重）
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'memes_image_url_hash_unique' AND table_name = 'memes'
+  ) THEN
+    ALTER TABLE memes ADD CONSTRAINT memes_image_url_hash_unique UNIQUE (image_url_hash);
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_memes_phash ON memes(phash);
 CREATE INDEX IF NOT EXISTS idx_memes_category ON memes(category);
 CREATE INDEX IF NOT EXISTS idx_memes_created_at ON memes(created_at DESC);
 
--- ============ 场景系统 ============
+-- ============ 表情包 <-> 标签 关联表 ============
 
--- 音乐素材表
-CREATE TABLE IF NOT EXISTS music_tracks (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  title TEXT NOT NULL,
-  url TEXT NOT NULL,
-  duration_ms INTEGER NOT NULL,
-  category TEXT NOT NULL DEFAULT 'bgm',
-  tags TEXT[] DEFAULT '{}',
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-ALTER TABLE music_tracks ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "允许公开读取音乐" ON music_tracks FOR SELECT USING (true);
-CREATE POLICY "允许插入音乐" ON music_tracks FOR INSERT WITH CHECK (true);
-
--- 故事项目表（用户创作的作品）
-CREATE TABLE IF NOT EXISTS projects (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  title TEXT NOT NULL DEFAULT '未命名作品',
-  description TEXT,
-  template_id UUID REFERENCES story_templates(id),
-  music_track_id UUID REFERENCES music_tracks(id),
-  status TEXT NOT NULL DEFAULT 'draft', -- draft / published
+CREATE TABLE IF NOT EXISTS memes_tags (
+  meme_id UUID NOT NULL REFERENCES memes(id) ON DELETE CASCADE,
+  tag_id UUID NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
+  PRIMARY KEY (meme_id, tag_id)
 );
 
-ALTER TABLE projects ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "允许公开读取项目" ON projects FOR SELECT USING (true);
-CREATE POLICY "允许创建项目" ON projects FOR INSERT WITH CHECK (true);
-CREATE POLICY "允许更新自己的项目" ON projects FOR UPDATE USING (true);
+CREATE INDEX IF NOT EXISTS idx_memes_tags_tag ON memes_tags(tag_id);
 
--- 项目场景表（时间线上的每个场景）
-CREATE TABLE IF NOT EXISTS project_scenes (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  sort_order INTEGER NOT NULL DEFAULT 0,
-  meme_id UUID REFERENCES memes(id),          -- 选中的表情包
-  image_url TEXT,                              -- 或自定义图片URL
-  duration_ms INTEGER NOT NULL DEFAULT 2000,   -- 场景时长(毫秒)
-  text_overlay TEXT,                           -- 文字叠加
-  text_position TEXT NOT NULL DEFAULT 'bottom-center', -- top-left/top-right/bottom-left/bottom-right/center
-  transition TEXT NOT NULL DEFAULT 'fade',     -- fade/slide/none
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
+ALTER TABLE memes_tags ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "允许公开读取关联" ON memes_tags;
+CREATE POLICY "允许公开读取关联" ON memes_tags FOR SELECT USING (true);
+DROP POLICY IF EXISTS "允许插入关联" ON memes_tags;
+CREATE POLICY "允许插入关联" ON memes_tags FOR INSERT WITH CHECK (true);
 
-ALTER TABLE project_scenes ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "允许公开读取场景" ON project_scenes FOR SELECT USING (true);
-CREATE POLICY "允许创建场景" ON project_scenes FOR INSERT WITH CHECK (true);
-CREATE POLICY "允许更新场景" ON project_scenes FOR UPDATE USING (true);
-CREATE POLICY "允许删除场景" ON project_scenes FOR DELETE USING (true);
+-- ============ 便捷视图：查询表情包及其所有标签 ============
 
-CREATE INDEX IF NOT EXISTS idx_project_scenes_project ON project_scenes(project_id, sort_order);
-
--- AI 故事模板表
-CREATE TABLE IF NOT EXISTS story_templates (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  title TEXT NOT NULL,
-  theme TEXT NOT NULL,                          -- 主题关键词
-  mood TEXT NOT NULL DEFAULT 'funny',           -- 情绪: funny/warm/sad/exciting/calm
-  description TEXT,                             -- AI 生成的故事描述
-  scenes_json JSONB NOT NULL DEFAULT '[]',      -- 预设场景 [{order, description, suggested_tags, duration_ms, text_hint}]
-  music_suggestion TEXT,                        -- 建议的音乐风格
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-ALTER TABLE story_templates ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "允许公开读取模板" ON story_templates FOR SELECT USING (true);
-CREATE POLICY "允许创建模板" ON story_templates FOR INSERT WITH CHECK (true);
+CREATE OR REPLACE VIEW memes_with_tags AS
+SELECT
+  m.id,
+  m.title,
+  m.image_url,
+  m.category,
+  m.image_url_hash,
+  m.phash,
+  m.created_at,
+  ARRAY_AGG(t.name) FILTER (WHERE t.name IS NOT NULL) AS tags
+FROM memes m
+LEFT JOIN memes_tags mt ON m.id = mt.meme_id
+LEFT JOIN tags t ON mt.tag_id = t.id
+GROUP BY m.id, m.title, m.image_url, m.category, m.image_url_hash, m.phash, m.created_at;

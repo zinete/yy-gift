@@ -1,15 +1,20 @@
 import { Button } from "@/components/ui/button";
-import { CATEGORIES } from "@/lib/supabase";
+import type { TagOption } from "@/lib/supabase";
 
 interface CategoryFilterProps {
   selected: string;
-  onSelect: (category: string) => void;
+  onSelect: (tag: string) => void;
+  categories: TagOption[];
 }
 
-export function CategoryFilter({ selected, onSelect }: CategoryFilterProps) {
+export function CategoryFilter({
+  selected,
+  onSelect,
+  categories,
+}: CategoryFilterProps) {
   return (
     <div className="flex flex-wrap gap-2">
-      {CATEGORIES.map((cat) => (
+      {categories.map((cat) => (
         <Button
           key={cat.value}
           variant={selected === cat.value ? "default" : "outline"}

@@ -12,7 +12,7 @@ import {
   PaginationPrevious,
   PaginationEllipsis,
 } from "@/components/ui/pagination";
-import { supabase, type Meme } from "@/lib/supabase";
+import { supabase, type Meme, type TagOption } from "@/lib/supabase";
 import { Loader2, ImageOff } from "lucide-react";
 
 const PAGE_SIZE = 20;
@@ -20,38 +20,69 @@ const PAGE_SIZE = 20;
 function App() {
   const [memes, setMemes] = useState<Meme[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedCategory, setSelectedCategory] = useState("all");
+  const [selectedTag, setSelectedTag] = useState<string>("all");
+  const [tagOptions, setTagOptions] = useState<TagOption[]>([
+    { value: "all", label: "全部" },
+  ]);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+
+  /** 从 tags 表获取所有 name 作为筛选参数 */
+  const fetchTagOptions = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("tags")
+        .select("name")
+        .order("name", { ascending: true });
+
+      if (error) throw error;
+
+      const options: TagOption[] = [
+        { value: "all", label: "全部" },
+        ...(data || []).map((t) => ({ value: t.name, label: t.name })),
+      ];
+      setTagOptions(options);
+
+      // 如果当前选中的 tag 已被删除，重置为全部
+      if (
+        selectedTag !== "all" &&
+        !options.some((t) => t.value === selectedTag)
+      ) {
+        setSelectedTag("all");
+      }
+    } catch (err) {
+      console.error("获取标签失败:", err);
+    }
+  };
 
   const fetchMemes = async (page: number) => {
     setLoading(true);
     try {
-      // 先查总数
       let countQuery = supabase
-        .from("memes")
+        .from("memes_with_tags")
         .select("*", { count: "exact", head: true });
-      if (selectedCategory !== "all") {
-        countQuery = countQuery.eq("category", selectedCategory);
+      if (selectedTag !== "all") {
+        const escaped = selectedTag.replace(/"/g, '\\"');
+        countQuery = countQuery.filter("tags", "cs", `{"${escaped}"}`);
       }
       const { count } = await countQuery;
       const total = count || 0;
       setTotalPages(Math.max(1, Math.ceil(total / PAGE_SIZE)));
 
-      // 再查当前页数据
       let query = supabase
-        .from("memes")
-        .select("*")
+        .from("memes_with_tags")
+        .select("id, title, image_url, category, tags, created_at")
         .order("created_at", { ascending: false })
         .range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1);
 
-      if (selectedCategory !== "all") {
-        query = query.eq("category", selectedCategory);
+      if (selectedTag !== "all") {
+        const escaped = selectedTag.replace(/"/g, '\\"');
+        query = query.filter("tags", "cs", `{"${escaped}"}`);
       }
 
       const { data, error } = await query;
       if (error) throw error;
-      setMemes(data || []);
+      setMemes(data as Meme[]);
     } catch (err) {
       console.error("获取表情包失败:", err);
     } finally {
@@ -60,9 +91,13 @@ function App() {
   };
 
   useEffect(() => {
+    fetchTagOptions();
+  }, []);
+
+  useEffect(() => {
     setCurrentPage(1);
     fetchMemes(1);
-  }, [selectedCategory]);
+  }, [selectedTag]);
 
   useEffect(() => {
     if (currentPage > 1) {
@@ -76,6 +111,35 @@ function App() {
       alert("图片链接已复制到剪贴板");
     } catch {
       alert("复制失败，请手动复制");
+    }
+  };
+
+  const handleDelete = async (memeId: string) => {
+    try {
+      // 1. 先删 memes_tags 关联记录
+      const { error: linkError } = await supabase
+        .from("memes_tags")
+        .delete()
+        .eq("meme_id", memeId);
+
+      if (linkError) {
+        console.warn("删除关联记录失败:", linkError.message);
+      }
+
+      // 2. 再删 memes 主记录
+      const { error: memeError } = await supabase
+        .from("memes")
+        .delete()
+        .eq("id", memeId);
+
+      if (memeError) throw memeError;
+
+      // 3. 刷新列表 & tag 选项（有些 tag 可能被删光了）
+      setMemes((prev) => prev.filter((m) => m.id !== memeId));
+      fetchTagOptions();
+    } catch (err) {
+      console.error("删除失败:", err);
+      alert("删除失败，请稍后重试");
     }
   };
 
@@ -145,12 +209,16 @@ function App() {
         {/* 操作栏 */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-8">
           <CategoryFilter
-            selected={selectedCategory}
-            onSelect={setSelectedCategory}
+            selected={selectedTag}
+            onSelect={setSelectedTag}
+            categories={tagOptions}
           />
           <UploadDialog
             supabase={supabase}
-            onUploadSuccess={() => fetchMemes(currentPage)}
+            onUploadSuccess={() => {
+              fetchTagOptions();
+              fetchMemes(currentPage);
+            }}
           />
         </div>
 
@@ -170,7 +238,12 @@ function App() {
           <>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
               {memes.map((meme) => (
-                <MemeCard key={meme.id} meme={meme} onCopy={handleCopy} />
+                <MemeCard
+                  key={meme.id}
+                  meme={meme}
+                  onCopy={handleCopy}
+                  onDelete={handleDelete}
+                />
               ))}
             </div>
 
@@ -213,13 +286,13 @@ function App() {
               </div>
             )}
           </>
-            )}
-          </main>
+        )}
+      </main>
 
-          {/* 页脚 */}
-          <footer className="border-t mt-12 py-6 text-center text-sm text-muted-foreground">
-            <p>YY 表情包 - 收集快乐，分享表情</p>
-          </footer>
+      {/* 页脚 */}
+      <footer className="border-t mt-12 py-6 text-center text-sm text-muted-foreground">
+        <p>YY 表情包 - 收集快乐，分享表情</p>
+      </footer>
     </div>
   );
 }

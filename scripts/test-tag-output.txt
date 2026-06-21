@@ -1,0 +1,56 @@
+
+📋 标签验证函数 isCleanTag 测试:
+  ✅ isCleanTag("可爱") = true (expected: true)
+  ✅ isCleanTag("cute") = true (expected: true)
+  ✅ isCleanTag("一二布布") = true (expected: true)
+  ✅ isCleanTag("gif") = true (expected: true)
+  ✅ isCleanTag("动图") = true (expected: true)
+  ✅ isCleanTag("a") = false (expected: false)
+  ✅ isCleanTag("123") = false (expected: false)
+  ✅ isCleanTag("a@b") = false (expected: false)
+  ✅ isCleanTag("😂") = false (expected: false)
+  ✅ isCleanTag("中") = false (expected: false)
+  ✅ isCleanTag("中abc") = false (expected: false)
+  ✅ isCleanTag("") = false (expected: false)
+  ✅ isCleanTag(" ") = false (expected: false)
+  ✅ isCleanTag("abc_123") = false (expected: false)
+
+📋 自动分类和标签提取测试:
+  ✅ 正常中文关键词
+     关键词: "一二布布 gif"
+     → 分类: yier (expected: yier)
+     → 标签: [一二布布, gif, 动图]
+     → 期望包含: [一二布布, gif, 动图]
+  ✅ 正常中文 + 简单
+     关键词: "搞笑表情包"
+     → 分类: funny (expected: funny)
+     → 标签: [搞笑表情包]
+     → 期望包含: [搞笑表情包]
+  ✅ 可爱中文
+     关键词: "猫猫可爱图片"
+     → 分类: cute (expected: cute)
+     → 标签: [猫猫可爱图片]
+  ✅ 混合英文和中文
+     关键词: "cute可爱表情包"
+     → 分类: cute (expected: cute)
+     → 标签: [可爱表情包, cute]
+  ✅ 乱码/不可识别的字符 → 应标记 other
+     关键词: "a@b#c$d ⭐️🎉🔥"
+     → 分类: other (expected: other)
+     → 标签: [(空)]
+  ✅ 纯数字和特殊字符 → 应标记 other
+     关键词: "123456 !!! @@@ ###"
+     → 分类: other (expected: other)
+     → 标签: [(空)]
+  ✅ 无意义 URL 乱码 → 不应产生标签
+     关键词: "abc123xyz"
+     → 分类: other (expected: other)
+     → 标签: [abc123xyz]
+  ✅ 仅符号和 emoji → 应标记 other
+     关键词: "😂😘😜💯🔥"
+     → 分类: other (expected: other)
+     → 标签: [(空)]
+
+==============================
+✅ 通过: 22   ❌ 失败: 0
+🎉 所有测试通过！

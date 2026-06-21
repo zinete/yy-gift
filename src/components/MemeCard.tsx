@@ -1,21 +1,17 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import type { Meme } from "@/lib/supabase";
-import { Copy, Download, Heart } from "lucide-react";
+import { Copy, Download, Heart, Trash2 } from "lucide-react";
 
 interface MemeCardProps {
   meme: Meme;
   onCopy: (url: string) => void;
+  onDelete: (memeId: string) => void;
 }
 
-export function MemeCard({ meme, onCopy }: MemeCardProps) {
-  const categoryLabels: Record<string, string> = {
-    funny: "搞笑",
-    cute: "可爱",
-    reaction: "反应",
-    mood: "心情",
-    other: "其他",
-  };
+export function MemeCard({ meme, onCopy, onDelete }: MemeCardProps) {
+  const tags: string[] = Array.isArray(meme.tags) ? meme.tags : [];
+  const primaryTag = tags[0];
 
   return (
     <Card className="group overflow-hidden hover:shadow-lg transition-all duration-300 hover:-translate-y-1">
@@ -28,9 +24,13 @@ export function MemeCard({ meme, onCopy }: MemeCardProps) {
             loading="lazy"
           />
           <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors duration-300 flex items-end justify-between p-3 opacity-0 group-hover:opacity-100">
-            <Badge variant="secondary" className="bg-white/90 text-foreground">
-              {categoryLabels[meme.category] || meme.category}
-            </Badge>
+            <div className="flex flex-col gap-1">
+              {primaryTag && (
+                <Badge variant="outline" className="bg-white/70 text-xs">
+                  {primaryTag}
+                </Badge>
+              )}
+            </div>
             <div className="flex gap-2">
               <button
                 onClick={() => onCopy(meme.image_url)}
@@ -49,12 +49,10 @@ export function MemeCard({ meme, onCopy }: MemeCardProps) {
                     a.href = url;
                     a.download =
                       meme.title?.replace(/[/\\?%*:|"<>]/g, "_") || "image";
-                    document.body.appendChild(a);
                     a.click();
                     document.body.removeChild(a);
                     URL.revokeObjectURL(url);
                   } catch {
-                    // 降级：直接打开
                     window.open(meme.image_url, "_blank");
                   }
                 }}
@@ -68,6 +66,17 @@ export function MemeCard({ meme, onCopy }: MemeCardProps) {
                 title="收藏"
               >
                 <Heart className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() => {
+                  if (confirm("确定删除这张表情包吗？")) {
+                    onDelete(meme.id);
+                  }
+                }}
+                className="p-2 rounded-full bg-white/90 hover:bg-red-500 hover:text-white text-red-500 transition-colors"
+                title="删除"
+              >
+                <Trash2 className="h-4 w-4" />
               </button>
             </div>
           </div>

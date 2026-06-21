@@ -2,6 +2,7 @@ import "dotenv/config";
 import axios from "axios";
 import * as cheerio from "cheerio";
 import { createClient, WebSocketLikeConstructor } from "@supabase/supabase-js";
+import { createHash } from "crypto";
 import ws from "ws";
 
 // ============ 配置 ============
@@ -14,9 +15,123 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 
 interface CrawlConfig {
   keyword: string;
-  category: string;
-  tags: string[];
   maxImages: number;
+}
+
+// ============ URL 规范化与哈希（去重用） ============
+
+// ============ 标签规则：从关键词+URL 自动匹配**唯一** tag ============
+// 每条规则：匹配 → 生成一个 tag；最终取**第一个命中**的规则，保证一张图一个标签
+
+const TAG_RULES: { match: RegExp; tag: string }[] = [
+  {
+    match: /(^|[^a-z])(一二|yier|yi[_ ]?er)[^a-z]?/i,
+    tag: "一二布布",
+  },
+  { match: /(^|[^a-z])(布布|bubu)[^a-z]?/i, tag: "布布" },
+  { match: /(^|[^a-z])(仙剑|xianjian|xj)[^a-z]?/i, tag: "仙剑奇侠传" },
+  { match: /(^|[^a-z])(gif|动图|dongtu)[^a-z]?/i, tag: "动图" },
+  {
+    match: /(^|[^a-z])(搞笑|funny|haha|哈哈|233|emmm|沙雕|斗图)[^a-z]?/i,
+    tag: "搞笑",
+  },
+  {
+    match: /(^|[^a-z])(可爱|萌|cute|kawaii|卡哇伊)[^a-z]?/i,
+    tag: "可爱",
+  },
+  { match: /(^|[^a-z])(表情|reaction|biaoqing)[^a-z]?/i, tag: "表情包" },
+  {
+    match: /(^|[^a-z])(心情|emo|难过|开心|happy|sad)[^a-z]?/i,
+    tag: "心情",
+  },
+  {
+    match: /(^|[^a-z])(猫|狗|dog|cat|puppy|kitten|animal|动物)[^a-z]?/i,
+    tag: "动物",
+  },
+  { match: /(^|[^a-z])(熊猫|panda)[^a-z]?/i, tag: "熊猫" },
+];
+
+function normalizeImageUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    // 移除 query string（常见的追踪参数、缓存 key），保留协议+域名+路径
+    u.search = "";
+    u.hash = "";
+    return u.toString();
+  } catch {
+    // 不是合法 URL 就原样返回
+    return url;
+  }
+}
+
+function hashUrl(url: string): string {
+  return createHash("sha256").update(normalizeImageUrl(url)).digest("hex");
+}
+
+// ============ 标签验证：只允许纯中文或纯英文单词 ============
+
+function isCleanTag(tag: string): boolean {
+  if (!tag || tag.length < 2 || tag.length > 15) return false;
+  // 纯中文（2-15 个中文字符）
+  if (/^[\u4e00-\u9fa5]{2,15}$/.test(tag)) return true;
+  // 纯英文单词（2-15 个英文字母，可包含连字符或数字，但字母占主体）
+  if (/^[a-zA-Z][a-zA-Z0-9\-]{1,14}$/.test(tag)) return true;
+  return false;
+}
+
+function isChineseOnly(text: string): boolean {
+  return /^[\u4e00-\u9fa5]+$/.test(text);
+}
+
+function isEnglishOnly(text: string): boolean {
+  return /^[a-zA-Z0-9\-]+$/.test(text);
+}
+
+// ============ 自动标签提取（一张图 → 一个 tag）============
+
+function extractTag(keyword: string, url: string): string | null {
+  const lowerKw = keyword.toLowerCase();
+  const lowerUrl = url.toLowerCase();
+  const lowerCombined = `${lowerKw} ${lowerUrl}`;
+
+  // 1. TAG_RULES：命中**第一个**规则直接返回它的 tag
+  for (const rule of TAG_RULES) {
+    if (rule.match.test(lowerCombined)) {
+      return rule.tag;
+    }
+  }
+
+  // 2. 从关键词分词里提取**第一个**合法标签（中文优先于英文）
+  const rawTokens = keyword.split(/[\s,，。！？!?\-\_·]+/);
+  const chineseTokens: string[] = [];
+  const englishTokens: string[] = [];
+
+  for (const rawToken of rawTokens) {
+    const token = rawToken.trim();
+    if (token.length < 2) continue;
+
+    if (isChineseOnly(token) && isCleanTag(token)) {
+      chineseTokens.push(token);
+    } else if (isEnglishOnly(token) && isCleanTag(token)) {
+      englishTokens.push(token);
+    } else {
+      // 混合 token → 分别提取中文和英文子串
+      const chineseParts = token.match(/[\u4e00-\u9fa5]{2,}/g) || [];
+      const englishParts = token.match(/[a-zA-Z][a-zA-Z0-9]{1,}/g) || [];
+      for (const cp of chineseParts) if (isCleanTag(cp)) chineseTokens.push(cp);
+      for (const ep of englishParts) if (isCleanTag(ep)) englishTokens.push(ep);
+    }
+  }
+
+  if (chineseTokens.length > 0) return chineseTokens[0];
+  if (englishTokens.length > 0) return englishTokens[0];
+
+  // 3. URL 是 gif → "动图"
+  if (/\.gif($|\?)/i.test(url)) {
+    return "动图";
+  }
+
+  return null;
 }
 
 // ============ 核心：百度 objURL 自定义编码解码 ============
@@ -459,53 +574,151 @@ function isValidImageMagicBytes(bytes: Uint8Array): boolean {
   return false;
 }
 
-// ============ 步骤4：保存到 Supabase（带可达性校验） ============
+// ============ 步骤4：保存到 Supabase（去重 + 动态标签） ============
+
+async function upsertTagsGetIds(tagNames: string[]): Promise<string[]> {
+  if (tagNames.length === 0) return [];
+
+  const cleanNames = Array.from(new Set(tagNames.map((t) => t.trim()))).filter(
+    (t) => isCleanTag(t),
+  );
+  if (cleanNames.length === 0) return [];
+
+  // 先查已存在的
+  const { data: existing } = await supabase
+    .from("tags")
+    .select("id, name")
+    .in("name", cleanNames);
+
+  const existingMap = new Map<string, string>();
+  for (const row of existing || []) {
+    existingMap.set(row.name, row.id);
+  }
+
+  const newTags = cleanNames.filter((n) => !existingMap.has(n));
+  const newIds: string[] = [];
+
+  // 批量插入新 tag
+  if (newTags.length > 0) {
+    const { data: inserted, error } = await supabase
+      .from("tags")
+      .insert(newTags.map((name) => ({ name })))
+      .select("id, name");
+
+    if (error) {
+      console.log(`   ⚠️ tag 插入失败: ${error.message}`);
+    } else {
+      for (const row of inserted || []) {
+        existingMap.set(row.name, row.id);
+        newIds.push(row.id);
+      }
+    }
+  }
+
+  // 返回全部 id
+  return cleanNames
+    .map((n) => existingMap.get(n))
+    .filter((id): id is string => !!id);
+}
 
 async function saveToSupabase(
   urls: string[],
   config: CrawlConfig,
-): Promise<number> {
-  const { category, tags } = config;
+): Promise<{ saved: number; duplicate: number; skipped: number }> {
   let saved = 0;
+  let duplicate = 0;
   let skipped = 0;
 
-  for (const url of urls) {
-    // 校验图片是否可访问
-    const accessible = await isImageAccessible(url);
-    if (!accessible) {
-      console.log(`   🔗 不可访问，跳过: ${url.slice(0, 50)}...`);
-      skipped++;
+  // 1. 批量计算哈希并预先查询已存在的，避免逐张去重
+  const urlHashes = urls.map((url) => ({ url, hash: hashUrl(url) }));
+  const allHashes = urlHashes.map((x) => x.hash);
+
+  console.log(`   🔍 预查询已存在图片 (${allHashes.length})`);
+  const { data: existingRows } = await supabase
+    .from("memes")
+    .select("image_url_hash")
+    .in("image_url_hash", allHashes);
+
+  const existingHashes = new Set(
+    existingRows?.map((r) => r.image_url_hash).filter(Boolean),
+  );
+  console.log(`   ✅ 已存在 ${existingHashes.size} 张`);
+
+  for (const { url, hash } of urlHashes) {
+    // 2. 快速去重（URL 哈希）
+    if (existingHashes.has(hash)) {
+      duplicate++;
+      console.log(`   ⏭️ 已存在 (URL 重复)`);
       continue;
     }
 
+    // 3. 可达性校验
+    const accessible = await isImageAccessible(url);
+    if (!accessible) {
+      skipped++;
+      console.log(`   🔗 不可访问: ${url.slice(0, 55)}...`);
+      continue;
+    }
+
+    // 4. 自动生成**唯一** tag（TAG_RULES 第一命中 > 关键词分词 > URL .gif）
+    const tag = extractTag(config.keyword, url);
+
+    // 4a. 最终兜底：标签必须通过 isCleanTag 验证
+    const cleanTag = tag && isCleanTag(tag) ? tag : null;
+
     const title = generateTitle(url, config.keyword);
 
-    const { error } = await supabase.from("memes").insert({
-      title,
-      image_url: url,
-      category,
-      tags,
-    });
+    // 5. 插入 meme（category 固定为 other，筛选完全由 tags 驱动）
+    const { data: memeData, error: memeError } = await supabase
+      .from("memes")
+      .insert({
+        title,
+        image_url: url,
+        image_url_hash: hash,
+        category: "other",
+      })
+      .select("id");
 
-    if (error) {
-      if (error.code === "23505") {
-        console.log(`   ⏭️ 已存在: ${title.slice(0, 40)}`);
+    if (memeError) {
+      if (memeError.code === "23505") {
+        duplicate++;
+        existingHashes.add(hash);
+        console.log(`   ⏭️ 唯一约束冲突: ${title.slice(0, 40)}`);
       } else {
-        console.log(`   ❌ 失败: ${error.message}`);
+        console.log(`   ❌ 插入失败: ${memeError.message}`);
       }
-    } else {
-      saved++;
-      console.log(`   ✅ 保存成功 (${saved}): ${title.slice(0, 40)}`);
+      continue;
     }
+
+    const memeId = memeData?.[0]?.id;
+    if (!memeId) {
+      console.log(`   ❌ 未返回 meme id`);
+      continue;
+    }
+
+    // 6. Upsert 标签并关联（一张图 → 一个 tag）
+    if (cleanTag) {
+      const tagIds = await upsertTagsGetIds([cleanTag]);
+      if (tagIds.length > 0) {
+        const { error: linkError } = await supabase
+          .from("memes_tags")
+          .insert({ meme_id: memeId, tag_id: tagIds[0] });
+        if (linkError) {
+          console.log(`   ⚠️ 标签关联失败: ${linkError.message}`);
+        }
+      }
+    }
+
+    saved++;
+    existingHashes.add(hash);
+    console.log(
+      `   ✅ 保存 #${saved} [${cleanTag || "(无标签)"}]: ${title.slice(0, 35)}`,
+    );
 
     await new Promise((r) => setTimeout(r, 300));
   }
 
-  if (skipped > 0) {
-    console.log(`\n   ⚠️ 因不可访问跳过 ${skipped} 张图片`);
-  }
-
-  return saved;
+  return { saved, duplicate, skipped };
 }
 
 // ============ 主流程 ============
@@ -515,24 +728,23 @@ async function main() {
 
   if (args.length === 0 || args[0] === "--help") {
     console.log(`
-🎨 YY 表情包爬虫（高清可动版 - GIF 动图）
+🎨 YY 表情包爬虫（自动标签 + 去重）
 
 用法:
   npx tsx scripts/crawler-hd.ts <关键词> [选项]
 
 选项:
-  --category <分类>   存入分类 (默认: other)
-  --tags <标签>      标签，逗号分隔 (默认: 爬取)
   --max <数量>       最多爬取数量 (默认: 20)
 
 示例:
-  npx tsx scripts/crawler-hd.ts "一二布布 gif" --category bubu --tags 布布,可爱,gif --max 30
-  npx tsx scripts/crawler-hd.ts "搞笑表情包" --category funny --max 50
-  npx tsx scripts/crawler-hd.ts "猫猫表情包" --category cute --tags 猫猫,可爱
+  npx tsx scripts/crawler-hd.ts "一二布布 gif" --max 30
+  npx tsx scripts/crawler-hd.ts "搞笑表情包" --max 50
+  npx tsx scripts/crawler-hd.ts "猫猫可爱表情包" --max 20
 
 说明:
-  本脚本会通过百度自定义编码解码 objURL 来获取高清/可动原图，
-  相比普通爬虫能正确获取 GIF 动图而非静态缩略图。
+  - 自动根据关键词 + URL 规则提取标签 (写入 tags 表)
+  - 基于 URL 哈希去重，避免重复入库
+  - 通过百度自定义编码解码 objURL 获取高清/可动原图
     `);
     return;
   }
@@ -546,17 +758,11 @@ async function main() {
 
   const config: CrawlConfig = {
     keyword,
-    category: getArg("category", "other"),
-    tags: getArg("tags", "爬取")
-      .split(",")
-      .map((t) => t.trim()),
     maxImages: parseInt(getArg("max", "20"), 10),
   };
 
   console.log("📋 爬取配置:", {
     keyword: config.keyword,
-    category: config.category,
-    tags: config.tags,
     maxImages: config.maxImages,
   });
 
@@ -592,10 +798,15 @@ async function main() {
       return;
     }
 
-    // 3. 入库
+    // 3. 入库（自动分类 + 动态标签 + 去重）
     console.log(`\n💾 开始保存到数据库...\n`);
-    const saved = await saveToSupabase(originalUrls, config);
-    console.log(`\n🎉 完成！共保存 ${saved} 张高清/可动表情包`);
+    const { saved, duplicate, skipped } = await saveToSupabase(
+      originalUrls,
+      config,
+    );
+    console.log(
+      `\n🎉 完成！保存 ${saved} 张，重复 ${duplicate} 张，不可访问 ${skipped} 张`,
+    );
   } catch (err) {
     console.error("\n💥 爬取失败:", err instanceof Error ? err.message : err);
   }

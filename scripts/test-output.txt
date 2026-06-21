@@ -1,0 +1,27 @@
+=== 测试 normalizeImageUrl ===
+  原始: https://example.com/bubu/yi-er.gif?t=123
+  规范化: https://example.com/bubu/yi-er.gif
+  哈希: 5515d34a5fca99cb3c8a...
+
+  原始: https://example.com/funny/meme.jpg?x=y
+  规范化: https://example.com/funny/meme.jpg
+  哈希: dcab5dcd66ba7680d3db...
+
+  原始: https://cdn.example.com/cats/kitty.png?v=1
+  规范化: https://cdn.example.com/cats/kitty.png
+  哈希: d819b938c6e70725f097...
+
+=== 测试 extractTagsFromKeyword ===
+  关键词: "一二布布 gif"
+  → 分类: yier
+  → 标签: [一二布布, gif, 动图]
+
+  关键词: "搞笑表情包"
+  → 分类: funny
+  → 标签: [搞笑表情包]
+
+  关键词: "猫猫可爱图片"
+  → 分类: cute
+  → 标签: [猫猫可爱图片]
+
+✅ 所有测试通过，核心函数正常工作！

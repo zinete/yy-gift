@@ -1,0 +1,11 @@
+✅ crawler-hd.ts 读取成功: 859 行
+  ✅ isCleanTag 函数已找到
+  ✅ isChineseOnly 函数已找到
+  ✅ isEnglishOnly 函数已找到
+  ✅ extractTagsFromKeyword 函数已找到
+  ✅ upsertTagsGetIds 函数已找到
+  ✅ saveToSupabase 函数已找到
+
+  🔍 isCleanTag 被使用 8 次
+
+🎉 所有检查通过，脚本结构正常
