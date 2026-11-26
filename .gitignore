@@ -24,3 +24,5 @@ dist-ssr
 *.sw?
 .env
 .env.example
+.visual-index.sqlite3
+.visual-assets/

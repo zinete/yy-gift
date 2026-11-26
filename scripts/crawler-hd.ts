@@ -1,4 +1,6 @@
-import "dotenv/config";
+import { config as loadEnv } from "dotenv";
+loadEnv({ path: ".env.local" });
+loadEnv();
 import axios from "axios";
 import * as cheerio from "cheerio";
 import { createClient, WebSocketLikeConstructor } from "@supabase/supabase-js";
@@ -9,7 +11,7 @@ import ws from "ws";
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || "";
 const SUPABASE_KEY = process.env.VITE_SUPABASE_ANON_KEY || "";
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
+const supabase = createClient(SUPABASE_URL || "http://127.0.0.1:54321", SUPABASE_KEY || "not-configured", {
   realtime: { transport: ws as unknown as WebSocketLikeConstructor },
 });
 
@@ -224,6 +226,8 @@ async function searchBaiduImages(
     try {
       const res = await axios.get(apiUrl, {
         timeout: 15000,
+        maxRedirects: 0,
+        maxContentLength: 4 * 1024 * 1024,
         headers: {
           "User-Agent":
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
@@ -265,6 +269,7 @@ async function searchBaiduImages(
 async function extractOriginalUrl(
   item: Record<string, unknown>,
   index: number,
+  allowDetailFetch = true,
 ): Promise<string | null> {
   const getString = (key: string): string => {
     const val = item[key];
@@ -343,6 +348,7 @@ async function extractOriginalUrl(
   }
 
   // --- 策略4：构造详情页 URL 提取 ---
+  if (!allowDetailFetch) return null;
   const di = getString("di");
   if (!di) {
     console.log(`   [${index}] ❌ 无 di 且所有字段均无效，跳过`);
@@ -760,6 +766,18 @@ async function main() {
     keyword,
     maxImages: parseInt(getArg("max", "20"), 10),
   };
+
+  // 本地识图流程负责下载及校验图片，爬虫只负责从搜索结果提取地址。
+  if (args.includes("--discover")) {
+    const items = await searchBaiduImages(keyword, config.maxImages);
+    const urls = await Promise.all(items.map((item, index) => extractOriginalUrl(item, index + 1, false)));
+    console.log(JSON.stringify([...new Set(urls.filter(Boolean))]));
+    return;
+  }
+
+  if (!SUPABASE_URL || !SUPABASE_KEY) {
+    throw new Error(".env.local 缺少 Supabase 配置");
+  }
 
   console.log("📋 爬取配置:", {
     keyword: config.keyword,

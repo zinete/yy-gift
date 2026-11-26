@@ -12,12 +12,16 @@ import {
   PaginationPrevious,
   PaginationEllipsis,
 } from "@/components/ui/pagination";
-import { supabase, type Meme, type TagOption } from "@/lib/supabase";
+import { supabase, isSupabaseConfigured, type Meme, type TagOption } from "@/lib/supabase";
+import { StoryEditor } from "@/components/StoryEditor";
+import { VisualLibraryTools } from "@/components/VisualLibraryTools";
+import { preferLocalImages } from "@/lib/visual";
 import { Loader2, ImageOff } from "lucide-react";
 
 const PAGE_SIZE = 20;
 
 function App() {
+  const [editorOpen, setEditorOpen] = useState(false);
   const [memes, setMemes] = useState<Meme[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedTag, setSelectedTag] = useState<string>("all");
@@ -29,6 +33,7 @@ function App() {
 
   /** 从 tags 表获取所有 name 作为筛选参数 */
   const fetchTagOptions = async () => {
+    if (!isSupabaseConfigured) return;
     try {
       const { data, error } = await supabase
         .from("tags")
@@ -56,6 +61,7 @@ function App() {
   };
 
   const fetchMemes = async (page: number) => {
+    if (!isSupabaseConfigured) { setLoading(false); return; }
     setLoading(true);
     try {
       let countQuery = supabase
@@ -82,7 +88,7 @@ function App() {
 
       const { data, error } = await query;
       if (error) throw error;
-      setMemes(data as Meme[]);
+      setMemes(await preferLocalImages((data ?? []) as Meme[]));
     } catch (err) {
       console.error("获取表情包失败:", err);
     } finally {
@@ -107,7 +113,7 @@ function App() {
 
   const handleCopy = async (url: string) => {
     try {
-      await navigator.clipboard.writeText(url);
+      await navigator.clipboard.writeText(url.startsWith("/") ? new URL(url, location.origin).href : url);
       alert("图片链接已复制到剪贴板");
     } catch {
       alert("复制失败，请手动复制");
@@ -205,6 +211,12 @@ function App() {
     <div className="min-h-screen bg-background">
       <Header />
 
+      <div className="max-w-7xl mx-auto px-4 pt-6 flex gap-3">
+        <button className="rounded-md bg-black text-white px-4 py-2" onClick={() => setEditorOpen(!editorOpen)}>{editorOpen ? "返回表情包库" : "创建短剧"}</button>
+      </div>
+
+      {editorOpen ? <StoryEditor /> : <>
+
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* 操作栏 */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-8">
@@ -221,6 +233,11 @@ function App() {
             }}
           />
         </div>
+
+        <VisualLibraryTools onImported={() => {
+          void fetchTagOptions();
+          void fetchMemes(currentPage);
+        }} />
 
         {/* 表情包网格 */}
         {loading ? (
@@ -293,6 +310,7 @@ function App() {
       <footer className="border-t mt-12 py-6 text-center text-sm text-muted-foreground">
         <p>YY 表情包 - 收集快乐，分享表情</p>
       </footer>
+      </>}
     </div>
   );
 }

@@ -1,7 +1,8 @@
+import { useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import type { Meme } from "@/lib/supabase";
-import { Copy, Download, Heart, Trash2 } from "lucide-react";
+import { Copy, Download, Heart, ImageOff, Trash2 } from "lucide-react";
 
 interface MemeCardProps {
   meme: Meme;
@@ -10,6 +11,8 @@ interface MemeCardProps {
 }
 
 export function MemeCard({ meme, onCopy, onDelete }: MemeCardProps) {
+  const [failedUrl, setFailedUrl] = useState("");
+  const unavailable = failedUrl === meme.image_url;
   const tags: string[] = Array.isArray(meme.tags) ? meme.tags : [];
   const primaryTag = tags[0];
 
@@ -17,13 +20,22 @@ export function MemeCard({ meme, onCopy, onDelete }: MemeCardProps) {
     <Card className="group overflow-hidden hover:shadow-lg transition-all duration-300 hover:-translate-y-1">
       <CardContent className="p-0">
         <div className="relative aspect-square overflow-hidden bg-muted">
-          <img
-            src={meme.image_url}
-            alt={meme.title}
-            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-            loading="lazy"
-          />
-          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors duration-300 flex items-end justify-between p-3 opacity-0 group-hover:opacity-100">
+          {unavailable ? (
+            <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-muted-foreground" title={meme.title}>
+              <ImageOff className="h-5 w-5" aria-hidden />
+              <p className="text-sm">图片暂不可用</p>
+            </div>
+          ) : (
+            <img
+              src={meme.image_url}
+              alt={meme.title}
+              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+              loading="lazy"
+              referrerPolicy="no-referrer"
+              onError={() => setFailedUrl(meme.image_url)}
+            />
+          )}
+          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors duration-300 flex items-end justify-between p-3 opacity-0 group-hover:opacity-100 focus-within:opacity-100">
             <div className="flex flex-col gap-1">
               {primaryTag && (
                 <Badge variant="outline" className="bg-white/70 text-xs">
@@ -42,7 +54,8 @@ export function MemeCard({ meme, onCopy, onDelete }: MemeCardProps) {
               <button
                 onClick={async () => {
                   try {
-                    const res = await fetch(meme.image_url);
+                    const res = await fetch(meme.image_url, { referrerPolicy: "no-referrer" });
+                    if (!res.ok) throw new Error("图片下载失败");
                     const blob = await res.blob();
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement("a");
@@ -50,7 +63,6 @@ export function MemeCard({ meme, onCopy, onDelete }: MemeCardProps) {
                     a.download =
                       meme.title?.replace(/[/\\?%*:|"<>]/g, "_") || "image";
                     a.click();
-                    document.body.removeChild(a);
                     URL.revokeObjectURL(url);
                   } catch {
                     window.open(meme.image_url, "_blank");
